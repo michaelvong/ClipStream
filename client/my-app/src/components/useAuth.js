@@ -7,7 +7,11 @@ export default function UseAuth(code){
     const [refreshToken, setRefreshToken] = useState();
     
     useEffect(() => {
-        
+        //prevent the hooks from running again when page refreshed and token exists
+        if(localStorage.getItem("access_token") !== "undefined"){
+            console.log(localStorage.getItem("access_token"));
+            return;
+        }
         axios.post('http://localhost:3001/auth', {
             client_id : process.env.REACT_APP_TWITCH_CLIENT_ID,
             redirect_uri : "http://localhost:3000",
