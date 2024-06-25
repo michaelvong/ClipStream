@@ -44,7 +44,10 @@ app.post('/auth', async (req, res) => {
     },
   })
   const userJSON = await user.json();
-  console.log(resultJSON);
+  console.log('data from twitch api call to get access, refresh token', resultJSON);
+  if(resultJSON.status === 400){
+    return res.json({"Failed" : "Status 400 from twitch api call"});
+  }
   const userId = userJSON?.data[0]?.id;
   const userDisplay = userJSON.data[0]?.display_name;
   //console.log(userJSON.data[0].id);
@@ -54,10 +57,11 @@ app.post('/auth', async (req, res) => {
 
   //create a new user in  db with id from twitch api, with access and refresh token
   //if user exists, reset the two tokens
-  const access_token = jwt.sign({userDisplay}, process.env.ACCESS_TOKEN_SECRET, { expiresIn: twitch_expires_in.toString() + 's'});
-  const refresh_token = jwt.sign({userDisplay}, process.env.REFRESH_TOKEN_SECRET);
-  if(!await User.findOne({userId: userId, userDisplay: userDisplay})){
+  const access_token = jwt.sign({userDisplay, userId}, process.env.ACCESS_TOKEN_SECRET, { expiresIn: twitch_expires_in.toString() + 's'});
+  const person = await User.findOne({userId: userId, userDisplay: userDisplay});
+  if(!person){
     console.log('not found')
+    const refresh_token = jwt.sign({userDisplay, userId}, process.env.REFRESH_TOKEN_SECRET);
     const newUser = await User.create({
       userId: userId,
       userDisplay: userDisplay,
@@ -69,9 +73,13 @@ app.post('/auth', async (req, res) => {
   } else {
     console.log('found');
     await User.findOneAndUpdate({userId: userId, userDisplay: userDisplay}, 
-      {$set:{twitch_access_token: twitch_access_token, twitch_refresh_token: twitch_refresh_token}});
+      {$set:
+        {twitch_access_token: twitch_access_token, 
+        twitch_refresh_token: twitch_refresh_token,
+        access_token: access_token,
+      }});
   }
-
+  const refresh_token = person.refresh_token;
   res.json({ 
     userDisplay, 
     "access_token" : access_token,
@@ -94,7 +102,7 @@ app.post('/refresh', authenticateToken, async (req, res) => {
   const refresh_token = req.body.refresh_token;
   const user = await User.findOne({refresh_token : refresh_token})
   if(!user){
-    res.json({"failed":'fail'});
+    return res.json({"Reason":'No user found'});
   }
   //console.log(req.body)
   const result = await fetch('https://id.twitch.tv/oauth2/token', {
@@ -109,10 +117,11 @@ app.post('/refresh', authenticateToken, async (req, res) => {
   })
   //console.log(await result.json());
   const data = await result.json();
-  console.log(data);
+  console.log("data from twitch api call data", data);
   const username = user.userDisplay;
-  const new_access_token = jwt.sign({username}, process.env.ACCESS_TOKEN_SECRET, { expiresIn: data.expires_in.toString() + 's'});
-  console.log(new_access_token);
+  const userId = user.userId;
+  const new_access_token = jwt.sign({username, userId}, process.env.ACCESS_TOKEN_SECRET, { expiresIn: data.expires_in.toString() + 's'});
+  //console.log(new_access_token);
 
   //finds the user where my app's refresh_token matches the one in db
   //and then sets the twitch access token to the new access token we just received
@@ -130,7 +139,10 @@ app.post('/refresh', authenticateToken, async (req, res) => {
 
 app.post('/help', authenticateToken, (req, res) => {
   console.log(req.body);
-  //res.json('hi')
+  if(res.locals.userDisplay){
+    console.log('locals success', res.locals.userDisplay);
+  }
+  res.json('help success')
 })
 
 app.get('/user', async (req, res) => {
@@ -180,10 +192,13 @@ function authenticateToken(req, res, next) {
         console.log('invalid token: ' + err)
         res.sendStatus(403);
       } else {
-        console.log('verified');
+        //console.log('verified');
+        console.log('data from JWT token', data);
+        res.locals.userDisplay = data.userDisplay;
+        res.locals.userId = data.userId;
+        next();
       }
     });
-    next();
   }
 };
 
