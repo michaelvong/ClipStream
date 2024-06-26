@@ -145,6 +145,67 @@ app.post('/help', authenticateToken, (req, res) => {
   res.json('help success')
 })
 
+//gets a lost of broadcasters that the user follows
+app.get('/channels/followed', authenticateToken, async (req, res) => {
+  await mongooseConnect();
+  if(res.locals.userId){
+    console.log('user id', res.locals.userId);
+  }
+  const user = await User.findOne({access_token: res.locals.access_token});
+  if(!user){
+    res.json({
+      "userid" : res.locals.userId,
+      "Error" : "User not found",
+    })
+  }
+  //max results in a response is 100, if user follows more than 100 we need to account for the pagination
+  //pointer to next page is given in the first api call as a cursor object in pagination
+  //pagination.cursor
+  //need to add this cursor to the next api call as the after parameter 
+  const followed_list = [];
+  const result = await fetch(`https://api.twitch.tv/helix/channels/followed?user_id=${res.locals.userId}&first=100`, {
+    method : 'GET',
+    headers : {
+      'Authorization' : 'Bearer ' + user.twitch_access_token,
+      'Client-Id' : req.body.client_id,
+    },
+  })
+  const resultJSON = await result.json();
+  const cursor = resultJSON.pagination.cursor; //correct
+  const total_results = resultJSON.total; //correct
+
+  //populates the followed list with broadcaster ids from the first call
+  resultJSON.data.forEach((element) => {
+    followed_list.push(element.broadcaster_id); 
+  });
+
+  //total results % 100 gives up the number of api calls we need to make in addition to the previous one
+  const num_of_paginations = Math.floor(total_results / 100);
+  for (let i = 0; i < num_of_paginations; i++) {
+    const result = await fetch(`https://api.twitch.tv/helix/channels/followed?user_id=${res.locals.userId}&first=100&after=${cursor}`, {
+      method : 'GET',
+      headers : {
+        'Authorization' : 'Bearer ' + user.twitch_access_token,
+        'Client-Id' : req.body.client_id,
+      },
+    });
+    const resultJSON = await result.json();
+    resultJSON.data.forEach((element) => {
+      followed_list.push(element.broadcaster_id);
+    });
+    cursor = resultJSON.pagination.cursor;
+  }
+
+  //returns user id => the calling user's twitch id
+  //total => the total number of followed channels
+  //data => the list of broadcaster_ids that user follows
+  res.json({
+    "userid": res.locals.userId, 
+    "total" : followed_list.length, 
+    "data"  : followed_list,
+  });
+});
+
 app.get('/user', async (req, res) => {
   await fetch('https://api.twitch.tv/helix/users', {
     method: 'GET',
@@ -194,7 +255,9 @@ function authenticateToken(req, res, next) {
       } else {
         //console.log('verified');
         console.log('data from JWT token', data);
+        //console.log('real roken', req.token)
         res.locals.userDisplay = data.userDisplay;
+        res.locals.access_token = req.token;
         res.locals.userId = data.userId;
         next();
       }
