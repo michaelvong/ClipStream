@@ -7,6 +7,7 @@ const app = express();
 const jwt = require('jsonwebtoken');
 const mongooseConnect  = require('./lib/mongoose');
 const User = require('./models/User');
+const { performance } = require('perf_hooks');
 
 app.use(cors());
 app.use(express.json());
@@ -145,12 +146,14 @@ app.post('/help', authenticateToken, (req, res) => {
   res.json('help success')
 })
 
+//requires my access token
 //gets a lost of broadcasters that the user follows
-app.get('/channels/followed', authenticateToken, async (req, res) => {
+app.post('/channels/followed', authenticateToken, async (req, res) => {
   await mongooseConnect();
+  /*
   if(res.locals.userId){
     console.log('user id', res.locals.userId);
-  }
+  }*/
   const user = await User.findOne({access_token: res.locals.access_token});
   if(!user){
     res.json({
@@ -158,11 +161,12 @@ app.get('/channels/followed', authenticateToken, async (req, res) => {
       "Error" : "User not found",
     })
   }
+  console.log('testsetset', req.body);
   //max results in a response is 100, if user follows more than 100 we need to account for the pagination
   //pointer to next page is given in the first api call as a cursor object in pagination
   //pagination.cursor
   //need to add this cursor to the next api call as the after parameter 
-  const followed_list = [];
+  let followed_list = [];
   const result = await fetch(`https://api.twitch.tv/helix/channels/followed?user_id=${res.locals.userId}&first=100`, {
     method : 'GET',
     headers : {
@@ -171,9 +175,13 @@ app.get('/channels/followed', authenticateToken, async (req, res) => {
     },
   })
   const resultJSON = await result.json();
-  const cursor = resultJSON.pagination.cursor; //correct
+  if(resultJSON.error){
+    console.log(resultJSON);
+    res.json({'Error': resultJSON});
+    return;
+  }
+  let cursor = resultJSON?.pagination?.cursor; //correct
   const total_results = resultJSON.total; //correct
-
   //populates the followed list with broadcaster ids from the first call
   resultJSON.data.forEach((element) => {
     followed_list.push(element.broadcaster_id); 
@@ -205,6 +213,121 @@ app.get('/channels/followed', authenticateToken, async (req, res) => {
     "data"  : followed_list,
   });
 });
+
+//get request that takes my access token and 'Client-Id' in the headers
+//gets the clips from followed channels from the last 3 days
+app.get('/clips', authenticateToken, async (req, res) => {
+  var startTime = performance.now()
+  await mongooseConnect();
+
+  const user = await User.findOne({access_token: res.locals.access_token});
+  if(!user){
+    res.json({
+      "userid" : res.locals.userId,
+      "Error" : "User not found",
+    })
+  }
+  const result = await fetch(`https://api.twitch.tv/helix/channels/followed?user_id=${res.locals.userId}&first=100`, {
+    method : 'GET',
+    headers : {
+      'Authorization' : 'Bearer ' + user.twitch_access_token,
+      'Client-Id' : req.get('Client-Id'),
+    },
+  })
+  const resultJSON = await result.json();
+  //console.log(resultJSON)
+  if(resultJSON.error){
+    console.log(resultJSON);
+    res.json({'Error': resultJSON});
+    return;
+  }
+  let cursor = resultJSON?.pagination?.cursor; //correct
+  const total_results = resultJSON.total; //correct
+  let followed_list = [];
+  resultJSON.data.forEach((element) => {
+    followed_list.push(element.broadcaster_id); 
+  });
+  //console.log(followed_list.length, followed_list)
+
+  const num_of_paginations = Math.floor(total_results / 100);
+  for (let i = 0; i < num_of_paginations; i++) {
+    const result = await fetch(`https://api.twitch.tv/helix/channels/followed?user_id=${res.locals.userId}&first=100&after=${cursor}`, {
+      method : 'GET',
+      headers : {
+        'Authorization' : 'Bearer ' + user.twitch_access_token,
+        'Client-Id' : req.get('Client-Id'),
+      },
+    });
+    const resultJSON = await result.json();
+    resultJSON.data.forEach((element) => {
+      followed_list.push(element.broadcaster_id);
+    });
+    cursor = resultJSON.pagination.cursor;
+  }
+  //console.log(followed_list.length, followed_list)
+  const date = new Date();
+  //7am utc = 12am pst
+  //setting the starting date 3 days back and to midnight of that day
+  //current date is 06/26/24 5:27PM -> starting date is 06/23/24 12:00 AM
+  date.setDate(date.getDate()-7);
+  date.setUTCHours(7);
+  date.setUTCMinutes(0);
+  const starting_date = date.toISOString();
+  //console.log(starting_date, date.toLocaleTimeString());
+  //console.log(temp, date.getDate());
+
+  //we have arky broadcaster id hardcoded rn for testing
+  //put the api calls for all clips in a do while loop
+  //use multi threads to gather clips faster?
+  //console.log(followed_list.length, followed_list) //correct
+  //let loop_cursor = null;
+  let clips = [];
+  for(id of followed_list){
+    //console.log(id);
+
+    let loop_cursor = null;
+    do {
+      let clips_results = null;
+      if(loop_cursor) { //if cursor exists from previous api call, use it in next api call
+        clips_results = await fetch(`https://api.twitch.tv/helix/clips?broadcaster_id=${id}&started_at=${starting_date}&first=100&after=${loop_cursor}`, {
+          method : 'GET',
+          headers : {
+            'Authorization' : 'Bearer ' + user.twitch_access_token,
+            'Client-Id' : req.get('Client-Id'),
+          },
+        });
+      } else { //first call with no cursor
+        clips_results = await fetch(`https://api.twitch.tv/helix/clips?broadcaster_id=${id}&started_at=${starting_date}&first=100`, {
+          method : 'GET',
+          headers : {
+            'Authorization' : 'Bearer ' + user.twitch_access_token,
+            'Client-Id' : req.get('Client-Id'),
+          },
+        });
+      }
+      
+      let clips_resultsJSON = await clips_results.json();
+      const filtered_results = clips_resultsJSON.data.filter((element) => element.view_count > 500);
+      filtered_results.forEach((element) => {
+        clips.push(element);
+      });
+      if(filtered_results.length === 0) {
+        break;
+      }
+
+      loop_cursor = clips_resultsJSON.pagination.cursor;
+      //clips.push(clips_results);
+    } while (loop_cursor);
+  }
+
+  console.log(clips.length); //arky had 7 clips
+
+  //~303 clips from all 161 followed channels from past 7 days
+  clips.sort((a, b) => b.view_count - a.view_count);
+  var endTime = performance.now()
+  console.log('Time elapsed: ', `${endTime - startTime} milliseconds`)
+  res.json({'status' : 'in clips', 'total' : clips.length, 'data' : clips});
+})
 
 app.get('/user', async (req, res) => {
   await fetch('https://api.twitch.tv/helix/users', {
@@ -254,7 +377,7 @@ function authenticateToken(req, res, next) {
         res.sendStatus(403);
       } else {
         //console.log('verified');
-        console.log('data from JWT token', data);
+        console.log('data from JWT token:\n', data);
         //console.log('real roken', req.token)
         res.locals.userDisplay = data.userDisplay;
         res.locals.access_token = req.token;
