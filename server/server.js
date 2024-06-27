@@ -80,7 +80,7 @@ app.post('/auth', async (req, res) => {
         access_token: access_token,
       }});
   }
-  const refresh_token = person.refresh_token;
+  const refresh_token = person.refresh_token; //this runs when !person so person.refresh_token does not exist
   res.json({ 
     userDisplay, 
     "access_token" : access_token,
@@ -219,10 +219,9 @@ app.post('/channels/followed', authenticateToken, async (req, res) => {
 app.get('/clips', authenticateToken, async (req, res) => {
   var startTime = performance.now()
   await mongooseConnect();
-
   const user = await User.findOne({access_token: res.locals.access_token});
   if(!user){
-    res.json({
+    return res.json({
       "userid" : res.locals.userId,
       "Error" : "User not found",
     })
@@ -265,6 +264,44 @@ app.get('/clips', authenticateToken, async (req, res) => {
     cursor = resultJSON.pagination.cursor;
   }
   //console.log(followed_list.length, followed_list)
+
+  //we have arky broadcaster id hardcoded rn for testing
+  //put the api calls for all clips in a do while loop
+  //use multi threads to gather clips faster?
+  //console.log(followed_list.length, followed_list) //correct
+  //let loop_cursor = null;
+  let clips = [];
+  let concurreny_factor = 20; //each thread will handle up to 25 ids
+  let num_threads = Math.ceil(followed_list.length / concurreny_factor);
+  let promise = null;
+  const promises = [];
+  for(let i = 0; i < num_threads; i++) {
+    promise = getAllClips((followed_list.slice(i*concurreny_factor, (i+1)*concurreny_factor)), user.twitch_access_token, req.get('Client-Id'));
+    promises.push(promise);
+  }
+  let array_returns = await Promise.all(promises);
+  array_returns.forEach((clip_array) => {
+    //console.log(element);
+    clip_array.forEach((clip) => {
+      clips.push(clip);
+    })
+  })
+  //console.log(temp.length);
+
+  //let temp = await Promise.all(promises);
+  //console.log(followed_list_sliced);
+  //console.log(clips.length); //arky had 7 clips
+
+  //~303 clips from all 161 followed channels from past 7 days
+  clips.sort((a, b) => b.view_count - a.view_count);
+  var endTime = performance.now()
+  console.log('Time elapsed: ', `${endTime - startTime} milliseconds`)
+  res.json({'status' : 'in clips', 'total' : clips.length, 'data' : clips});
+})
+
+//takes id list (max size 25) 
+//do while, the api call with the list
+async function getAllClips(id_list, twitch_access_token, client_id) {
   const date = new Date();
   //7am utc = 12am pst
   //setting the starting date 3 days back and to midnight of that day
@@ -273,18 +310,8 @@ app.get('/clips', authenticateToken, async (req, res) => {
   date.setUTCHours(7);
   date.setUTCMinutes(0);
   const starting_date = date.toISOString();
-  //console.log(starting_date, date.toLocaleTimeString());
-  //console.log(temp, date.getDate());
-
-  //we have arky broadcaster id hardcoded rn for testing
-  //put the api calls for all clips in a do while loop
-  //use multi threads to gather clips faster?
-  //console.log(followed_list.length, followed_list) //correct
-  //let loop_cursor = null;
   let clips = [];
-  for(id of followed_list){
-    //console.log(id);
-
+  for(id of id_list){
     let loop_cursor = null;
     do {
       let clips_results = null;
@@ -292,16 +319,16 @@ app.get('/clips', authenticateToken, async (req, res) => {
         clips_results = await fetch(`https://api.twitch.tv/helix/clips?broadcaster_id=${id}&started_at=${starting_date}&first=100&after=${loop_cursor}`, {
           method : 'GET',
           headers : {
-            'Authorization' : 'Bearer ' + user.twitch_access_token,
-            'Client-Id' : req.get('Client-Id'),
+            'Authorization' : 'Bearer ' + twitch_access_token,
+            'Client-Id' : client_id,
           },
         });
       } else { //first call with no cursor
         clips_results = await fetch(`https://api.twitch.tv/helix/clips?broadcaster_id=${id}&started_at=${starting_date}&first=100`, {
           method : 'GET',
           headers : {
-            'Authorization' : 'Bearer ' + user.twitch_access_token,
-            'Client-Id' : req.get('Client-Id'),
+            'Authorization' : 'Bearer ' + twitch_access_token,
+            'Client-Id' : client_id,
           },
         });
       }
@@ -319,15 +346,8 @@ app.get('/clips', authenticateToken, async (req, res) => {
       //clips.push(clips_results);
     } while (loop_cursor);
   }
-
-  console.log(clips.length); //arky had 7 clips
-
-  //~303 clips from all 161 followed channels from past 7 days
-  clips.sort((a, b) => b.view_count - a.view_count);
-  var endTime = performance.now()
-  console.log('Time elapsed: ', `${endTime - startTime} milliseconds`)
-  res.json({'status' : 'in clips', 'total' : clips.length, 'data' : clips});
-})
+  return clips;
+}
 
 app.get('/user', async (req, res) => {
   await fetch('https://api.twitch.tv/helix/users', {
