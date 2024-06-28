@@ -2,7 +2,14 @@ import Login from "./components/Login";
 import Dashboard from "./components/Dashboard";
 
 function App() {
-  const code = new URLSearchParams(window.location.search).get('code');
+  let code = null;
+  if(localStorage.getItem("access_token") !== 'undefined'){
+    console.log('token exists')
+    code = true;
+  } else {
+    code = new URLSearchParams(window.location.search).get('code');
+  }
+  
   //console.log(code);
   return (
     <div> 
