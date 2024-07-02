@@ -296,7 +296,7 @@ app.get('/clips', authenticateToken, async (req, res) => {
   clips.sort((a, b) => b.view_count - a.view_count);
   var endTime = performance.now()
   console.log('Time elapsed: ', `${endTime - startTime} milliseconds`)
-  res.json({'status' : 'in clips', 'total' : clips.length, 'data' : clips});
+  res.json({'status' : 'in clips', 'total' : clips.length, 'clips' : clips}); 
 })
 
 //takes id list (max size 25) 
