@@ -9,7 +9,7 @@ export default function UseAuth(code){
     useEffect(() => {
         //prevent the hooks from running again when page refreshed and token exists
         if(localStorage.getItem("access_token") !== "undefined"){
-            console.log(localStorage.getItem("access_token"));
+            //console.log(localStorage.getItem("access_token"));
             return;
         }
         axios.post('http://localhost:3001/auth', {
