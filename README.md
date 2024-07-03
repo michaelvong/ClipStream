@@ -13,5 +13,9 @@ To Run: <br/>
 'npm start' when you are in the '/client/my-app/' directory to start the client side <br/>
 'npm run devStart' starts the server and allows for auto-refresh when saving the file <br/>
 
+Technologies: <br/>
+MongoDB, Express, ReactJS, NodeJS <br/>
+Twitch API - used twitch api endpoints to gather data about the user and broadcasters <br/>
+
 Examples:
 ![clipstream1](https://github.com/michaelvong/ClipStream/assets/72327548/f2202893-9ab1-4206-8b2f-f171d9e49509)
